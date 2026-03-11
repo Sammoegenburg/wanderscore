@@ -88,13 +88,19 @@ export default function WalkPage() {
   }, [audioPlaying, geo.currentPosition]);
 
   const handleStart = useCallback(async () => {
-    geo.startTracking();
-    if (engineRef.current && !engineRef.current.playing) {
-      await engineRef.current.start();
-      setAudioPlaying(true);
-      setMusicState(engineRef.current.getState());
-    }
+    // Always transition UI — don't let audio errors block the experience
     setStarted(true);
+    geo.startTracking();
+    try {
+      if (engineRef.current && !engineRef.current.playing) {
+        await engineRef.current.start();
+        setAudioPlaying(true);
+        setMusicState(engineRef.current.getState());
+      }
+    } catch (err) {
+      console.error("Audio engine failed to start:", err);
+      // UI is still usable — walk tracking works without audio
+    }
   }, [geo]);
 
   const handleStop = useCallback(() => {
@@ -125,12 +131,16 @@ export default function WalkPage() {
 
   const toggleAudio = useCallback(async () => {
     if (!engineRef.current) return;
-    if (audioPlaying) {
-      engineRef.current.stop();
-      setAudioPlaying(false);
-    } else {
-      await engineRef.current.start();
-      setAudioPlaying(true);
+    try {
+      if (audioPlaying) {
+        engineRef.current.stop();
+        setAudioPlaying(false);
+      } else {
+        await engineRef.current.start();
+        setAudioPlaying(true);
+      }
+    } catch (err) {
+      console.error("Audio toggle error:", err);
     }
   }, [audioPlaying]);
 

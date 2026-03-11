@@ -380,7 +380,7 @@ export class AudioEngine {
     const Tone = await loadTone();
     await Tone.start();
 
-    this.createEffects(Tone);
+    await this.createEffects(Tone);
     this.createInstruments(Tone);
     this.createSequences(Tone);
 
@@ -411,7 +411,7 @@ export class AudioEngine {
   }
 
   // ── Create Effects Chain ──
-  private createEffects(Tone: any) {
+  private async createEffects(Tone: any) {
     const profile = PROFILES[this._culture];
     const env = ENV_FX[this._environment];
 
@@ -419,6 +419,8 @@ export class AudioEngine {
       decay: profile.reverbDecay * env.reverbMult,
       wet: 0.3,
     }).toDestination();
+    // Reverb must generate its impulse response before use
+    await this.reverb.ready;
 
     this.delay = new Tone.FeedbackDelay({
       delayTime: "8n",
@@ -432,6 +434,8 @@ export class AudioEngine {
       depth: 0.6,
       wet: 0.15,
     }).connect(this.delay);
+    // Chorus has an internal LFO that must be started
+    this.chorus.start();
 
     this.compressor = new Tone.Compressor({
       threshold: -18,
