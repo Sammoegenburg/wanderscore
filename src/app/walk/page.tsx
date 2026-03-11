@@ -195,10 +195,20 @@ export default function WalkPage() {
         </div>
       </div>
 
-      {/* GPS Error */}
-      {geo.error && (
+      {/* GPS Status */}
+      {started && geo.geoStatus === "acquiring" && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-indigo-500/10 border border-indigo-500/20 backdrop-blur-xl rounded-xl px-4 py-2 text-indigo-300 text-xs max-w-sm text-center">
+          Acquiring GPS... Music is playing!
+        </div>
+      )}
+      {started && geo.geoStatus === "fallback" && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-amber-500/10 border border-amber-500/20 backdrop-blur-xl rounded-xl px-4 py-2 text-amber-300 text-xs max-w-sm text-center">
+          Using approximate location. GPS will refine when available.
+        </div>
+      )}
+      {geo.error && !geo.currentPosition && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-red-500/10 border border-red-500/20 backdrop-blur-xl rounded-xl px-4 py-2 text-red-400 text-xs max-w-sm text-center">
-          {geo.error}. Make sure location access is enabled.
+          {geo.error}
         </div>
       )}
 
