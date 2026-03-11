@@ -6,9 +6,10 @@ import Link from "next/link";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useAuth } from "@/hooks/useAuth";
 import { AudioEngine } from "@/lib/audioEngine";
+import type { CultureType, MusicState } from "@/lib/audioEngine";
+import { getLocationContext, type LocationContext } from "@/lib/locationIntelligence";
 import MusicPlayer from "@/components/player/MusicPlayer";
 
-// MapLibre must be loaded client-side only
 const WalkMap = dynamic(() => import("@/components/map/WalkMap"), {
   ssr: false,
   loading: () => (
@@ -18,6 +19,16 @@ const WalkMap = dynamic(() => import("@/components/map/WalkMap"), {
   ),
 });
 
+const CULTURE_LABELS: Record<CultureType, string> = {
+  western: "Western Pop",
+  eastAsian: "East Asian",
+  latin: "Latin Groove",
+  middleEastern: "Middle Eastern",
+  indian: "Indian Raga",
+  african: "African Groove",
+  urban: "Urban Beat",
+};
+
 export default function WalkPage() {
   const { user, logout } = useAuth();
   const geo = useGeolocation();
@@ -25,6 +36,9 @@ export default function WalkPage() {
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [started, setStarted] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [musicState, setMusicState] = useState<MusicState | null>(null);
+  const [locationCtx, setLocationCtx] = useState<LocationContext | null>(null);
+  const stateIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Initialize audio engine once
   useEffect(() => {
@@ -33,15 +47,44 @@ export default function WalkPage() {
     }
   }, []);
 
-  // Feed location data to audio engine
+  // Poll music state for UI updates
+  useEffect(() => {
+    if (audioPlaying && engineRef.current) {
+      stateIntervalRef.current = setInterval(() => {
+        if (engineRef.current) {
+          setMusicState(engineRef.current.getState());
+        }
+      }, 500);
+    }
+    return () => {
+      if (stateIntervalRef.current) clearInterval(stateIntervalRef.current);
+    };
+  }, [audioPlaying]);
+
+  // Feed location data to audio engine + location intelligence
   useEffect(() => {
     if (!audioPlaying || !engineRef.current || !geo.currentPosition) return;
+
     engineRef.current.updateFromLocation({
       speed: geo.currentPosition.speed,
       heading: geo.currentPosition.heading,
       lat: geo.currentPosition.lat,
       lng: geo.currentPosition.lng,
     });
+
+    // Location intelligence (rate-limited internally to every 30s)
+    getLocationContext(geo.currentPosition.lat, geo.currentPosition.lng).then(
+      (ctx) => {
+        if (!ctx || !engineRef.current) return;
+        setLocationCtx(ctx);
+
+        // Only auto-switch culture if confidence is decent
+        if (ctx.confidence >= 0.3) {
+          engineRef.current.setCulture(ctx.culture);
+        }
+        engineRef.current.setEnvironment(ctx.environment);
+      }
+    );
   }, [audioPlaying, geo.currentPosition]);
 
   const handleStart = useCallback(async () => {
@@ -49,6 +92,7 @@ export default function WalkPage() {
     if (engineRef.current && !engineRef.current.playing) {
       await engineRef.current.start();
       setAudioPlaying(true);
+      setMusicState(engineRef.current.getState());
     }
     setStarted(true);
   }, [geo]);
@@ -60,6 +104,8 @@ export default function WalkPage() {
       setAudioPlaying(false);
     }
     setStarted(false);
+    setMusicState(null);
+    setLocationCtx(null);
 
     // Save walk to localStorage for gallery
     if (geo.trail.length > 1) {
@@ -70,7 +116,7 @@ export default function WalkPage() {
         trail: geo.trail,
         distance: geo.distance,
         duration: geo.duration,
-        mood: engineRef.current?.mood || "nature",
+        mood: engineRef.current?.culture || "western",
         progressionName: engineRef.current?.progressionName || "Unknown",
       });
       localStorage.setItem("ws_walks", JSON.stringify(walks.slice(0, 50)));
@@ -87,6 +133,13 @@ export default function WalkPage() {
       setAudioPlaying(true);
     }
   }, [audioPlaying]);
+
+  const handleCultureChange = useCallback((culture: CultureType) => {
+    if (engineRef.current) {
+      engineRef.current.setCulture(culture);
+      setMusicState(engineRef.current.getState());
+    }
+  }, []);
 
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-brand-dark">
@@ -142,24 +195,53 @@ export default function WalkPage() {
         </div>
       </div>
 
-      {/* GPS Status */}
+      {/* GPS Error */}
       {geo.error && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 bg-red-500/10 border border-red-500/20 backdrop-blur-xl rounded-xl px-4 py-2 text-red-400 text-xs max-w-sm text-center">
           {geo.error}. Make sure location access is enabled.
         </div>
       )}
 
-      {/* Start overlay (before starting) */}
+      {/* Context info overlay (while walking) */}
+      {started && (
+        <div className="absolute top-16 left-4 z-30 space-y-2">
+          {/* Culture badge */}
+          {musicState && (
+            <div className="bg-brand-dark/60 backdrop-blur-xl border border-white/5 rounded-full px-3 py-1.5 flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+              <span className="text-xs text-slate-300 font-medium">
+                {CULTURE_LABELS[musicState.culture]}
+              </span>
+            </div>
+          )}
+
+          {/* Neighborhood */}
+          {locationCtx?.neighborhood && (
+            <div className="bg-brand-dark/60 backdrop-blur-xl border border-white/5 rounded-full px-3 py-1.5">
+              <span className="text-xs text-slate-400">
+                {locationCtx.neighborhood}
+              </span>
+            </div>
+          )}
+
+          {/* Environment */}
+          {musicState && (
+            <div className="bg-brand-dark/60 backdrop-blur-xl border border-white/5 rounded-full px-3 py-1.5">
+              <span className="text-xs text-slate-500">
+                {musicState.environment} &middot; {musicState.intensity}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Start overlay */}
       {!started && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-brand-dark/40 backdrop-blur-sm">
           <div className="text-center">
             <div className="mb-6">
               <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-2xl shadow-indigo-500/30 animate-glow">
-                <svg
-                  className="w-8 h-8 text-white ml-1"
-                  fill="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="w-8 h-8 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M8 5v14l11-7z" />
                 </svg>
               </div>
@@ -168,7 +250,8 @@ export default function WalkPage() {
               Ready to walk?
             </h2>
             <p className="text-slate-400 text-sm mb-6 max-w-xs mx-auto">
-              Put on your headphones. The music begins when you start moving.
+              Put on headphones. Music adapts to your pace, surroundings,
+              and local culture in real-time.
             </p>
             <button
               onClick={handleStart}
@@ -180,7 +263,7 @@ export default function WalkPage() {
         </div>
       )}
 
-      {/* Stop button (while walking) */}
+      {/* End Walk button */}
       {started && (
         <button
           onClick={handleStop}
@@ -188,15 +271,6 @@ export default function WalkPage() {
         >
           End Walk
         </button>
-      )}
-
-      {/* Current mood indicator */}
-      {started && engineRef.current && (
-        <div className="absolute top-16 left-4 z-30 bg-brand-dark/60 backdrop-blur-xl border border-white/5 rounded-full px-3 py-1.5">
-          <span className="text-xs text-slate-400">
-            {engineRef.current.progressionName}
-          </span>
-        </div>
       )}
 
       {/* Music Player */}
@@ -208,6 +282,8 @@ export default function WalkPage() {
           speed={geo.currentPosition?.speed || 0}
           distance={geo.distance}
           duration={geo.duration}
+          musicState={musicState}
+          onCultureChange={handleCultureChange}
         />
       )}
     </div>
